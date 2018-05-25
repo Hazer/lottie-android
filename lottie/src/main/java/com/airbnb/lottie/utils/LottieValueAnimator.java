@@ -1,6 +1,8 @@
 package com.airbnb.lottie.utils;
 
 import android.animation.ValueAnimator;
+import android.annotation.TargetApi;
+import android.os.Build;
 import android.support.annotation.FloatRange;
 import android.support.annotation.Nullable;
 import android.support.annotation.VisibleForTesting;
@@ -12,8 +14,9 @@ import com.airbnb.lottie.LottieComposition;
  * This is a slightly modified {@link ValueAnimator} that allows us to update start and end values
  * easily optimizing for the fact that we know that it's a value animator with 2 floats.
  */
-public class LottieValueAnimator extends BaseLottieAnimator implements Choreographer.FrameCallback {
-
+public class LottieValueAnimator extends BaseLottieAnimator implements HandlerChoreographer.FrameCallback {
+  private static final boolean IS_JELLYBEAN_OR_HIGHER =
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN;
 
   private float speed = 1f;
   private boolean speedReversedForRepeatMode = false;
@@ -25,7 +28,19 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
   @Nullable private LottieComposition composition;
   @VisibleForTesting protected boolean isRunning = false;
 
+  @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
+  private final Choreographer.FrameCallback newCallback;
+
+  private final HandlerChoreographer.FrameCallbackHandler oldCallback;
+
   public LottieValueAnimator() {
+    if (IS_JELLYBEAN_OR_HIGHER) {
+      newCallback = new HandlerChoreographer.FrameCallbackWrapper(this);
+      oldCallback = null;
+    } else {
+      newCallback = null;
+      oldCallback = new HandlerChoreographer.FrameCallbackHandler(this);
+    }
   }
 
   /**
@@ -243,13 +258,32 @@ public class LottieValueAnimator extends BaseLottieAnimator implements Choreogra
   }
 
   protected void postFrameCallback() {
-    removeFrameCallback();
-    Choreographer.getInstance().postFrameCallback(this);
+    if (IS_JELLYBEAN_OR_HIGHER) {
+      removeFrameCallback(newCallback);
+      Choreographer.getInstance().postFrameCallback(newCallback);
+    } else {
+      removeFrameCallback(oldCallback);
+      HandlerChoreographer.getInstance().postFrameCallback(oldCallback);
+    }
     isRunning = true;
   }
 
   protected void removeFrameCallback() {
-    Choreographer.getInstance().removeFrameCallback(this);
+    if (IS_JELLYBEAN_OR_HIGHER) {
+      removeFrameCallback(newCallback);
+    } else {
+      removeFrameCallback(oldCallback);
+    }
+  }
+
+  @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
+  protected void removeFrameCallback(Choreographer.FrameCallback callback) {
+    Choreographer.getInstance().removeFrameCallback(callback);
+    isRunning = false;
+  }
+
+  protected void removeFrameCallback(HandlerChoreographer.FrameCallbackHandler callback) {
+    HandlerChoreographer.getInstance().removeFrameCallback(callback);
     isRunning = false;
   }
 
