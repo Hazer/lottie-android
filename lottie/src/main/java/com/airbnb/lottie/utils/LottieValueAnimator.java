@@ -1,12 +1,9 @@
 package com.airbnb.lottie.utils;
 
 import android.animation.ValueAnimator;
-import android.annotation.TargetApi;
-import android.os.Build;
 import android.support.annotation.FloatRange;
 import android.support.annotation.Nullable;
 import android.support.annotation.VisibleForTesting;
-import android.view.Choreographer;
 
 import com.airbnb.lottie.LottieComposition;
 
@@ -14,10 +11,7 @@ import com.airbnb.lottie.LottieComposition;
  * This is a slightly modified {@link ValueAnimator} that allows us to update start and end values
  * easily optimizing for the fact that we know that it's a value animator with 2 floats.
  */
-public class LottieValueAnimator extends BaseLottieAnimator implements HandlerChoreographer.FrameCallback {
-  private static final boolean IS_JELLYBEAN_OR_HIGHER =
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN;
-
+public class LottieValueAnimator extends BaseLottieAnimator implements ChoreographerCompat.FrameCallback {
   private float speed = 1f;
   private boolean speedReversedForRepeatMode = false;
   private long lastFrameTimeNs = 0;
@@ -28,19 +22,9 @@ public class LottieValueAnimator extends BaseLottieAnimator implements HandlerCh
   @Nullable private LottieComposition composition;
   @VisibleForTesting protected boolean isRunning = false;
 
-  @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-  private final Choreographer.FrameCallback newCallback;
-
-  private final HandlerChoreographer.FrameCallbackHandler oldCallback;
+  private final ChoreographerCompat.FrameCallbackCompat frameCallback = new ChoreographerCompat.FrameCallbackCompat(this);
 
   public LottieValueAnimator() {
-    if (IS_JELLYBEAN_OR_HIGHER) {
-      newCallback = new HandlerChoreographer.FrameCallbackWrapper(this);
-      oldCallback = null;
-    } else {
-      newCallback = null;
-      oldCallback = new HandlerChoreographer.FrameCallbackHandler(this);
-    }
   }
 
   /**
@@ -90,7 +74,7 @@ public class LottieValueAnimator extends BaseLottieAnimator implements HandlerCh
     return isRunning;
   }
 
-  @Override public void doFrame(long frameTimeNanos) {
+  public void doFrame(long frameTimeNanos) {
     postFrameCallback();
     if (composition == null || !isRunning()) {
       return;
@@ -149,8 +133,8 @@ public class LottieValueAnimator extends BaseLottieAnimator implements HandlerCh
 
     if (keepMinAndMaxFrames) {
       setMinAndMaxFrames(
-              (int) Math.max(this.minFrame, composition.getStartFrame()),
-              (int) Math.min(this.maxFrame, composition.getEndFrame())
+          (int) Math.max(this.minFrame, composition.getStartFrame()),
+          (int) Math.min(this.maxFrame, composition.getEndFrame())
       );
     } else {
       setMinAndMaxFrames((int) composition.getStartFrame(), (int) composition.getEndFrame());
@@ -258,32 +242,13 @@ public class LottieValueAnimator extends BaseLottieAnimator implements HandlerCh
   }
 
   protected void postFrameCallback() {
-    if (IS_JELLYBEAN_OR_HIGHER) {
-      removeFrameCallback(newCallback);
-      Choreographer.getInstance().postFrameCallback(newCallback);
-    } else {
-      removeFrameCallback(oldCallback);
-      HandlerChoreographer.getInstance().postFrameCallback(oldCallback);
-    }
+    removeFrameCallback();
+    ChoreographerCompat.getInstance().postFrameCallback(frameCallback);
     isRunning = true;
   }
 
   protected void removeFrameCallback() {
-    if (IS_JELLYBEAN_OR_HIGHER) {
-      removeFrameCallback(newCallback);
-    } else {
-      removeFrameCallback(oldCallback);
-    }
-  }
-
-  @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-  protected void removeFrameCallback(Choreographer.FrameCallback callback) {
-    Choreographer.getInstance().removeFrameCallback(callback);
-    isRunning = false;
-  }
-
-  protected void removeFrameCallback(HandlerChoreographer.FrameCallbackHandler callback) {
-    HandlerChoreographer.getInstance().removeFrameCallback(callback);
+    ChoreographerCompat.getInstance().removeFrameCallback(frameCallback);
     isRunning = false;
   }
 
