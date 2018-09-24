@@ -2,6 +2,7 @@ package com.airbnb.lottie.utils;
 
 import android.animation.ValueAnimator;
 import android.support.annotation.FloatRange;
+import android.support.annotation.MainThread;
 import android.support.annotation.Nullable;
 import android.support.annotation.VisibleForTesting;
 
@@ -20,7 +21,7 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
   private float minFrame = Integer.MIN_VALUE;
   private float maxFrame = Integer.MAX_VALUE;
   @Nullable private LottieComposition composition;
-  @VisibleForTesting protected boolean isRunning = false;
+  @VisibleForTesting protected boolean running = false;
 
   public BaseLottieValueAnimator() {
   }
@@ -69,7 +70,7 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
   }
 
   @Override public boolean isRunning() {
-    return isRunning;
+    return running;
   }
 
   @Override
@@ -132,8 +133,8 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
 
     if (keepMinAndMaxFrames) {
       setMinAndMaxFrames(
-          (int) Math.max(this.minFrame, composition.getStartFrame()),
-          (int) Math.min(this.maxFrame, composition.getEndFrame())
+              (int) Math.max(this.minFrame, composition.getStartFrame()),
+              (int) Math.min(this.maxFrame, composition.getEndFrame())
       );
     } else {
       setMinAndMaxFrames((int) composition.getStartFrame(), (int) composition.getEndFrame());
@@ -160,7 +161,7 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
   }
 
   public void setMinAndMaxFrames(int minFrame, int maxFrame) {
-    float compositionMinFrame = composition == null ? Float.MIN_VALUE : composition.getStartFrame();
+    float compositionMinFrame = composition == null ? -Float.MAX_VALUE : composition.getStartFrame();
     float compositionMaxFrame = composition == null ? Float.MAX_VALUE : composition.getEndFrame();
     this.minFrame = MiscUtils.clamp(minFrame, compositionMinFrame, compositionMaxFrame);
     this.maxFrame = MiscUtils.clamp(maxFrame, compositionMinFrame, compositionMaxFrame);
@@ -190,7 +191,9 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
     }
   }
 
+  @MainThread
   public void playAnimation() {
+    running = true;
     notifyStart(isReversed());
     setFrame((int) (isReversed() ? getMaxFrame() : getMinFrame()));
     lastFrameTimeNs = System.nanoTime();
@@ -198,16 +201,20 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
     internalPostFrameCallback();
   }
 
+  @MainThread
   public void endAnimation() {
     internalRemoveFrameCallback();
     notifyEnd(isReversed());
   }
 
+  @MainThread
   public void pauseAnimation() {
     internalRemoveFrameCallback();
   }
 
+  @MainThread
   public void resumeAnimation() {
+    running = true;
     internalPostFrameCallback();
     lastFrameTimeNs = System.nanoTime();
     if (isReversed() && getFrame() == getMinFrame()) {
@@ -217,6 +224,7 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
     }
   }
 
+  @MainThread
   @Override public void cancel() {
     notifyCancel();
     internalRemoveFrameCallback();
@@ -240,20 +248,32 @@ public abstract class BaseLottieValueAnimator extends BaseLottieAnimator impleme
     return maxFrame == Integer.MAX_VALUE ? composition.getEndFrame() : maxFrame;
   }
 
+  @MainThread
   protected void internalPostFrameCallback() {
-    internalRemoveFrameCallback();
-    postFrameCallback();
-    isRunning = true;
+    if (isRunning()) {
+      internalRemoveFrameCallback(false);
+      postFrameCallback();
+    }
   }
 
+  @MainThread
   protected abstract void postFrameCallback();
 
+  @MainThread
+  protected abstract void removeFrameCallback();
+
+  @MainThread
   protected void internalRemoveFrameCallback() {
-    removeFrameCallback();
-    isRunning = false;
+    this.internalRemoveFrameCallback(true);
   }
 
-  protected abstract void removeFrameCallback();
+  @MainThread
+  protected void internalRemoveFrameCallback(boolean stopRunning) {
+    removeFrameCallback();
+    if (stopRunning) {
+      running = false;
+    }
+  }
 
   private void verifyFrame() {
     if (composition == null) {

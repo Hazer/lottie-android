@@ -11,6 +11,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.support.annotation.FloatRange;
+import android.support.annotation.MainThread;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.annotation.RawRes;
@@ -20,9 +21,9 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.JsonReader;
 import android.util.Log;
-import android.util.SparseArray;
 
 import com.airbnb.lottie.model.KeyPath;
+import com.airbnb.lottie.model.LottieCompositionCache;
 import com.airbnb.lottie.value.LottieFrameInfo;
 import com.airbnb.lottie.value.LottieValueCallback;
 import com.airbnb.lottie.value.SimpleLottieValueCallback;
@@ -30,10 +31,9 @@ import com.airbnb.lottie.value.SimpleLottieValueCallback;
 import org.json.JSONObject;
 
 import java.io.StringReader;
-import java.lang.ref.WeakReference;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 
 /**
  * This view will load, deserialize, and display an After Effects animation exported with
@@ -41,8 +41,12 @@ import java.util.Map;
  * <p>
  * You may set the animation in one of two ways:
  * 1) Attrs: {@link R.styleable#LottieAnimationView_lottie_fileName}
- * 2) Programatically: {@link #setAnimation(String)}, {@link #setComposition(LottieComposition)},
- * or {@link #setAnimation(JsonReader)}.
+ * 2) Programmatically:
+ *      {@link #setAnimation(String)}
+ *      {@link #setAnimation(JsonReader, String)}
+ *      {@link #setAnimationFromJson(String, String)}
+ *      {@link #setAnimationFromUrl(String)}
+ *      {@link #setComposition(LottieComposition)}
  * <p>
  * You can set a default cache strategy with {@link R.attr#lottie_cacheStrategy}.
  * <p>
@@ -51,48 +55,29 @@ import java.util.Map;
  */
 @SuppressWarnings({"unused", "WeakerAccess"}) public class LottieAnimationView extends AppCompatImageView {
 
-  public static final CacheStrategy DEFAULT_CACHE_STRATEGY = CacheStrategy.Weak;
-
   private static final String TAG = LottieAnimationView.class.getSimpleName();
 
+  private final LottieListener<LottieComposition> loadedListener = new LottieListener<LottieComposition>() {
+    @Override public void onResult(LottieComposition composition) {
+      setComposition(composition);
+    }
+  };
 
-  /**
-   * Caching strategy for compositions that will be reused frequently.
-   * Weak or Strong indicates the GC reference strength of the composition in the cache.
-   */
-  public enum CacheStrategy {
-    None,
-    Weak,
-    Strong
-  }
-
-  private static final SparseArray<LottieComposition> RAW_RES_STRONG_REF_CACHE = new SparseArray<>();
-  private static final SparseArray<WeakReference<LottieComposition>> RAW_RES_WEAK_REF_CACHE =
-      new SparseArray<>();
-
-  private static final Map<String, LottieComposition> ASSET_STRONG_REF_CACHE = new HashMap<>();
-  private static final Map<String, WeakReference<LottieComposition>> ASSET_WEAK_REF_CACHE =
-      new HashMap<>();
-
-  private final OnCompositionLoadedListener loadedListener =
-      new OnCompositionLoadedListener() {
-        @Override public void onCompositionLoaded(@Nullable LottieComposition composition) {
-          if (composition != null) {
-            setComposition(composition);
-          }
-          compositionLoader = null;
-        }
-      };
+  private final LottieListener<Throwable> failureListener = new LottieListener<Throwable>() {
+    @Override public void onResult(Throwable throwable) {
+      throw new IllegalStateException("Unable to parse composition", throwable);
+    }
+  };
 
   private final LottieDrawable lottieDrawable = new LottieDrawable();
-  private CacheStrategy defaultCacheStrategy;
   private String animationName;
   private @RawRes int animationResId;
   private boolean wasAnimatingWhenDetached = false;
   private boolean autoPlay = false;
   private boolean useHardwareLayer = false;
+  private Set<LottieOnCompositionLoadedListener> lottieOnCompositionLoadedListeners = new HashSet<>();
 
-  @Nullable private Cancellable compositionLoader;
+  @Nullable private LottieTask<LottieComposition> compositionTask;
   /** Can be null because it is created async */
   @Nullable private LottieComposition composition;
 
@@ -113,16 +98,13 @@ import java.util.Map;
 
   private void init(@Nullable AttributeSet attrs) {
     TypedArray ta = getContext().obtainStyledAttributes(attrs, R.styleable.LottieAnimationView);
-    int cacheStrategyOrdinal = ta.getInt(
-        R.styleable.LottieAnimationView_lottie_cacheStrategy,
-        DEFAULT_CACHE_STRATEGY.ordinal());
-    this.defaultCacheStrategy = CacheStrategy.values()[cacheStrategyOrdinal];
     if (!isInEditMode()) {
       boolean hasRawRes = ta.hasValue(R.styleable.LottieAnimationView_lottie_rawRes);
       boolean hasFileName = ta.hasValue(R.styleable.LottieAnimationView_lottie_fileName);
+      boolean hasUrl = ta.hasValue(R.styleable.LottieAnimationView_lottie_url);
       if (hasRawRes && hasFileName) {
         throw new IllegalArgumentException("lottie_rawRes and lottie_fileName cannot be used at " +
-            "the same time. Please use use only one at once.");
+            "the same time. Please use only one at once.");
       } else if (hasRawRes) {
         int rawResId = ta.getResourceId(R.styleable.LottieAnimationView_lottie_rawRes, 0);
         if (rawResId != 0) {
@@ -132,6 +114,11 @@ import java.util.Map;
         String fileName = ta.getString(R.styleable.LottieAnimationView_lottie_fileName);
         if (fileName != null) {
           setAnimation(fileName);
+        }
+      } else if (hasUrl) {
+        String url = ta.getString(R.styleable.LottieAnimationView_lottie_url);
+        if (url != null) {
+          setAnimationFromUrl(url);
         }
       }
     }
@@ -266,9 +253,7 @@ import java.util.Map;
   @VisibleForTesting void recycleBitmaps() {
     // AppCompatImageView constructor will set the image when set from xml
     // before LottieDrawable has been initialized
-    if (lottieDrawable != null) {
-      lottieDrawable.recycleBitmaps();
-    }
+    lottieDrawable.recycleBitmaps();
   }
 
   /**
@@ -326,6 +311,9 @@ import java.util.Map;
    *    anything about that.
    */
   public void useHardwareAcceleration(boolean use) {
+    if (useHardwareLayer == use) {
+      return;
+    }
     useHardwareLayer = use;
     enableOrDisableHardwareLayer();
   }
@@ -337,120 +325,34 @@ import java.util.Map;
   /**
    * Sets the animation from a file in the raw directory.
    * This will load and deserialize the file asynchronously.
-   * <p>
-   * Will not cache the composition once loaded.
    */
-  public void setAnimation(@RawRes int animationResId) {
-    setAnimation(animationResId, defaultCacheStrategy);
-  }
-
-  /**
-   * Sets the animation from a file in the raw directory.
-   * This will load and deserialize the file asynchronously.
-   * <p>
-   * You may also specify a cache strategy. Specifying {@link CacheStrategy#Strong} will hold a
-   * strong reference to the composition once it is loaded
-   * and deserialized. {@link CacheStrategy#Weak} will hold a weak reference to said composition.
-   */
-  public void setAnimation(@RawRes final int animationResId, final CacheStrategy cacheStrategy) {
-    this.animationResId = animationResId;
+  public void setAnimation(@RawRes final int rawRes) {
+    this.animationResId = rawRes;
     animationName = null;
-    if (RAW_RES_WEAK_REF_CACHE.indexOfKey(animationResId) > 0) {
-      WeakReference<LottieComposition> compRef = RAW_RES_WEAK_REF_CACHE.get(animationResId);
-      LottieComposition ref = compRef.get();
-      if (ref != null) {
-        setComposition(ref);
-        return;
-      }
-    } else if (RAW_RES_STRONG_REF_CACHE.indexOfKey(animationResId) > 0) {
-      setComposition(RAW_RES_STRONG_REF_CACHE.get(animationResId));
-      return;
-    }
-
-    clearComposition();
-    cancelLoaderTask();
-    compositionLoader = LottieComposition.Factory.fromRawFile(getContext(), animationResId,
-        new OnCompositionLoadedListener() {
-          @Override public void onCompositionLoaded(LottieComposition composition) {
-            if (cacheStrategy == CacheStrategy.Strong) {
-              RAW_RES_STRONG_REF_CACHE.put(animationResId, composition);
-            } else if (cacheStrategy == CacheStrategy.Weak) {
-              RAW_RES_WEAK_REF_CACHE.put(animationResId, new WeakReference<>(composition));
-            }
-
-            setComposition(composition);
-          }
-        });
+    setCompositionTask(LottieCompositionFactory.fromRawRes(getContext(), rawRes));
   }
 
-  /**
-   * Sets the animation from a file in the assets directory.
-   * This will load and deserialize the file asynchronously.
-   * <p>
-   * Will not cache the composition once loaded.
-   */
-  public void setAnimation(String animationName) {
-    setAnimation(animationName, defaultCacheStrategy);
-  }
-
-  /**
-   * Sets the animation from a file in the assets directory.
-   * This will load and deserialize the file asynchronously.
-   * <p>
-   * You may also specify a cache strategy. Specifying {@link CacheStrategy#Strong} will hold a
-   * strong reference to the composition once it is loaded
-   * and deserialized. {@link CacheStrategy#Weak} will hold a weak reference to said composition.
-   */
-  public void setAnimation(final String animationName, final CacheStrategy cacheStrategy) {
-    this.animationName = animationName;
+  public void setAnimation(final String assetName) {
+    this.animationName = assetName;
     animationResId = 0;
-    if (ASSET_WEAK_REF_CACHE.containsKey(animationName)) {
-      WeakReference<LottieComposition> compRef = ASSET_WEAK_REF_CACHE.get(animationName);
-      LottieComposition ref = compRef.get();
-      if (ref != null) {
-        setComposition(ref);
-        return;
-      }
-    } else if (ASSET_STRONG_REF_CACHE.containsKey(animationName)) {
-      setComposition(ASSET_STRONG_REF_CACHE.get(animationName));
-      return;
-    }
-
-    clearComposition();
-    cancelLoaderTask();
-    compositionLoader = LottieComposition.Factory.fromAssetFileName(getContext(), animationName,
-        new OnCompositionLoadedListener() {
-          @Override public void onCompositionLoaded(LottieComposition composition) {
-            if (cacheStrategy == CacheStrategy.Strong) {
-              ASSET_STRONG_REF_CACHE.put(animationName, composition);
-            } else if (cacheStrategy == CacheStrategy.Weak) {
-              ASSET_WEAK_REF_CACHE.put(animationName, new WeakReference<>(composition));
-            }
-
-            setComposition(composition);
-          }
-        });
+    setCompositionTask(LottieCompositionFactory.fromAsset(getContext(), assetName));
   }
 
   /**
-   * @see #setAnimation(JsonReader) which is more efficient than using a JSONObject.
-   * For animations loaded from the network, use {@link #setAnimationFromJson(String)}.
-   *
-   * If you must use a JSONObject, you can convert it to a StreamReader with:
-   *    `new JsonReader(new StringReader(json.toString()));`
+   * @see #setAnimationFromJson(String, String)
    */
   @Deprecated
-  public void setAnimation(JSONObject json) {
-    setAnimation(new JsonReader(new StringReader(json.toString())));
+  public void setAnimationFromJson(String jsonString) {
+    setAnimationFromJson(jsonString, null);
   }
 
   /**
    * Sets the animation from json string. This is the ideal API to use when loading an animation
-   * over the network because you can use the raw response body here and a converstion to a
+   * over the network because you can use the raw response body here and a conversion to a
    * JSONObject never has to be done.
    */
-  public void setAnimationFromJson(String jsonString) {
-    setAnimation(new JsonReader(new StringReader(jsonString)));
+  public void setAnimationFromJson(String jsonString, @Nullable String cacheKey) {
+    setAnimation(new JsonReader(new StringReader(jsonString)), cacheKey);
   }
 
   /**
@@ -460,16 +362,34 @@ import java.util.Map;
    * This is particularly useful for animations loaded from the network. You can fetch the
    * bodymovin json from the network and pass it directly here.
    */
-  public void setAnimation(JsonReader reader) {
+  public void setAnimation(JsonReader reader, @Nullable String cacheKey) {
+    setCompositionTask(LottieCompositionFactory.fromJsonReader(reader, cacheKey));
+  }
+
+  /**
+   * Load a lottie animation from a url. The url can be a json file or a zip file. Use a zip file if you have images. Simply zip them together and lottie
+   * will unzip and link the images automatically.
+   *
+   * Under the hood, Lottie uses Java HttpURLConnection because it doesn't require any transitive networking dependencies. It will download the file
+   * to the application cache under a temporary name. If the file successfully parses to a composition, it will rename the temporary file to one that
+   * can be accessed immediately for subsequent requests. If the file does not parse to a composition, the temporary file will be deleted.
+   */
+  public void setAnimationFromUrl(String url) {
+    setCompositionTask(LottieCompositionFactory.fromUrl(getContext(), url));
+  }
+
+  private void setCompositionTask(LottieTask<LottieComposition> compositionTask) {
     clearComposition();
     cancelLoaderTask();
-    compositionLoader = LottieComposition.Factory.fromJsonReader(reader, loadedListener);
+    this.compositionTask = compositionTask
+            .addListener(loadedListener)
+            .addFailureListener(failureListener);
   }
 
   private void cancelLoaderTask() {
-    if (compositionLoader != null) {
-      compositionLoader.cancel();
-      compositionLoader = null;
+    if (compositionTask != null) {
+      compositionTask.removeListener(loadedListener);
+      compositionTask.removeFailureListener(failureListener);
     }
   }
 
@@ -499,6 +419,11 @@ import java.util.Map;
     setImageDrawable(lottieDrawable);
 
     requestLayout();
+
+    for (LottieOnCompositionLoadedListener lottieOnCompositionLoadedListener : lottieOnCompositionLoadedListeners) {
+        lottieOnCompositionLoadedListener.onCompositionLoaded(composition);
+    }
+
   }
 
   @Nullable public LottieComposition getComposition() {
@@ -523,6 +448,7 @@ import java.util.Map;
    * Plays the animation from the beginning. If speed is < 0, it will start at the end
    * and play towards the beginning
    */
+  @MainThread
   public void playAnimation() {
     lottieDrawable.playAnimation();
     enableOrDisableHardwareLayer();
@@ -532,6 +458,7 @@ import java.util.Map;
    * Continues playing the animation from its current position. If speed < 0, it will play backwards
    * from the current position.
    */
+  @MainThread
   public void resumeAnimation() {
     lottieDrawable.resumeAnimation();
     enableOrDisableHardwareLayer();
@@ -768,7 +695,7 @@ import java.util.Map;
    * Takes a {@link KeyPath}, potentially with wildcards or globstars and resolve it to a list of
    * zero or more actual {@link KeyPath Keypaths} that exist in the current animation.
    *
-   * If you want to set value callbacks for any of these values, it is recommend to use the
+   * If you want to set value callbacks for any of these values, it is recommended to use the
    * returned {@link KeyPath} objects because they will be internally resolved to their content
    * and won't trigger a tree walk of the animation contents when applied.
    */
@@ -777,8 +704,8 @@ import java.util.Map;
   }
 
   /**
-   * Add an property callback for the specified {@link KeyPath}. This {@link KeyPath} can resolve
-   * to multiple contents. In that case, the callbacks's value will apply to all of them.
+   * Add a property callback for the specified {@link KeyPath}. This {@link KeyPath} can resolve
+   * to multiple contents. In that case, the callback's value will apply to all of them.
    *
    * Internally, this will check if the {@link KeyPath} has already been resolved with
    * {@link #resolveKeyPath(KeyPath)} and will resolve it if it hasn't.
@@ -801,18 +728,18 @@ import java.util.Map;
     });
   }
 
-    /**
-     * Set the scale on the current composition. The only cost of this function is re-rendering the
-     * current frame so you may call it frequent to scale something up or down.
-     *
-     * The smaller the animation is, the better the performance will be. You may find that scaling an
-     * animation down then rendering it in a larger ImageView and letting ImageView scale it back up
-     * with a scaleType such as centerInside will yield better performance with little perceivable
-     * quality loss.
-     *
-     * You can also use a fixed view width/height in conjunction with the normal ImageView
-     * scaleTypes centerCrop and centerInside.
-     */
+  /**
+   * Set the scale on the current composition. The only cost of this function is re-rendering the
+   * current frame so you may call it frequent to scale something up or down.
+   *
+   * The smaller the animation is, the better the performance will be. You may find that scaling an
+   * animation down then rendering it in a larger ImageView and letting ImageView scale it back up
+   * with a scaleType such as centerInside will yield better performance with little perceivable
+   * quality loss.
+   *
+   * You can also use a fixed view width/height in conjunction with the normal ImageView
+   * scaleTypes centerCrop and centerInside.
+   */
   public void setScale(float scale) {
     lottieDrawable.setScale(scale);
     if (getDrawable() == lottieDrawable) {
@@ -825,11 +752,13 @@ import java.util.Map;
     return lottieDrawable.getScale();
   }
 
+  @MainThread
   public void cancelAnimation() {
     lottieDrawable.cancelAnimation();
     enableOrDisableHardwareLayer();
   }
 
+  @MainThread
   public void pauseAnimation() {
     lottieDrawable.pauseAnimation();
     enableOrDisableHardwareLayer();
@@ -880,6 +809,18 @@ import java.util.Map;
   private void enableOrDisableHardwareLayer() {
     boolean useHardwareLayer = this.useHardwareLayer && lottieDrawable.isAnimating();
     setLayerType(useHardwareLayer ? LAYER_TYPE_HARDWARE : LAYER_TYPE_SOFTWARE, null);
+  }
+
+  public boolean addLottieOnCompositionLoadedListener(@NonNull LottieOnCompositionLoadedListener lottieOnCompositionLoadedListener) {
+    return lottieOnCompositionLoadedListeners.add(lottieOnCompositionLoadedListener);
+  }
+
+  public boolean removeLottieOnCompositionLoadedListener(@NonNull LottieOnCompositionLoadedListener lottieOnCompositionLoadedListener) {
+    return lottieOnCompositionLoadedListeners.remove(lottieOnCompositionLoadedListener);
+  }
+
+  public void removeAllLottieOnCompositionLoadedListener() {
+    lottieOnCompositionLoadedListeners.clear();
   }
 
   private static class SavedState extends BaseSavedState {

@@ -7,9 +7,11 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.PointF;
+import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Environment;
 import android.support.annotation.Nullable;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.ViewGroup;
@@ -26,10 +28,13 @@ import com.airbnb.lottie.value.ScaleXY;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
+import retrofit2.http.HEAD;
 
 public class LottieSnapshotProvider extends SnapshotProvider {
 
@@ -46,12 +51,12 @@ public class LottieSnapshotProvider extends SnapshotProvider {
 
   LottieSnapshotProvider(Context context) {
     this.context = context;
-    dummyBitmap = BitmapFactory.decodeResource(context.getResources(), com.airbnb.lottie.samples.R
-        .drawable.airbnb);
+    dummyBitmap = BitmapFactory.decodeResource(context.getResources(), com.airbnb.lottie.samples.R.drawable.airbnb);
   }
 
   @Override
   public void beginSnapshotting() {
+    Log.d(L.TAG, "beginSnapshotting");
     try {
       snapshotAssets(context.getAssets().list(""));
       String[] tests = context.getAssets().list("Tests");
@@ -74,6 +79,7 @@ public class LottieSnapshotProvider extends SnapshotProvider {
     testDynamicProperties();
     testSwitchingToDrawableAndBack();
     testStartEndFrameWithStartEndProgress();
+    testUrl();
   }
 
   private void snapshotAssets(String[] animations) {
@@ -85,10 +91,11 @@ public class LottieSnapshotProvider extends SnapshotProvider {
       file.delete();
     }
     for (final String animation : animations) {
-      if (!animation.contains(".json")) {
+      if (!animation.contains(".json") && !animation.contains(".zip")) {
         continue;
       }
       remainingTasks += 1;
+      Log.d(L.TAG, "Enqueueing " + animation);
       executor.execute(new Runnable() {
         @Override
         public void run() {
@@ -100,17 +107,24 @@ public class LottieSnapshotProvider extends SnapshotProvider {
   }
 
   private void runAnimation(final String name) {
-    LottieComposition composition = LottieComposition.Factory.fromFileSync(context, name);
-    if (composition.getBounds().width() > 4 * Resources.getSystem().getDisplayMetrics().widthPixels ||
-        composition.getBounds().height() > 4 * Resources.getSystem().getDisplayMetrics().heightPixels) {
-      Log.d("Happo", "" + name + " is too large. Skipping (" + composition.getBounds().width() +
-          "x" + composition.getBounds().height() + ")");
+    Log.d(L.TAG, "Running " + name);
+    LottieResult<LottieComposition> result = LottieCompositionFactory.fromAssetSync(context, name);
+    if (result.getException() != null) throw new IllegalStateException(result.getException());
+    LottieComposition composition = result.getValue();
+
+    Rect bounds = composition.getBounds();
+    int width = bounds.width();
+    int height = bounds.height();
+    DisplayMetrics displayMetrics = Resources.getSystem().getDisplayMetrics();
+    if (width > 4 * displayMetrics.widthPixels || height > 4 * displayMetrics.heightPixels) {
+      Log.d("Happo", name + " is too large. Skipping (" + width + "x" + height + ")");
       return;
     }
     drawComposition(composition, name);
   }
 
   private void drawComposition(LottieComposition composition, String name) {
+    Log.d(L.TAG, "Drawing " + name);
     LottieAnimationView view = new LottieAnimationView(context);
     view.setImageAssetDelegate(new ImageAssetDelegate() {
       @Override public Bitmap fetchBitmap(LottieImageAsset asset) {
@@ -120,6 +134,7 @@ public class LottieSnapshotProvider extends SnapshotProvider {
     view.setComposition(composition);
     for (float progress : PROGRESS) {
       view.setProgress(progress);
+      Log.d(L.TAG, "Recording " + name + " @ " + progress);
       recordSnapshot(view, 1080, "android", name, Integer.toString((int) (progress * 100)));
     }
   }
@@ -131,6 +146,7 @@ public class LottieSnapshotProvider extends SnapshotProvider {
 
   private void decrementAndCompleteIfDone() {
     remainingTasks--;
+    Log.d(L.TAG, "There are " + remainingTasks + " tasks left.");
     Log.d("Happo", "There are " + remainingTasks + " remaining tasks.");
     if (remainingTasks < 0) {
       throw new IllegalStateException("Remaining tasks cannot be negative.");
@@ -544,6 +560,11 @@ public class LottieSnapshotProvider extends SnapshotProvider {
     view.setFrame(30);
     recordSnapshot(view, 1080, "android", "EndFrame", "End Frame (blue)", params);
 
+  }
+
+  private void testUrl() {
+    LottieComposition composition = LottieCompositionFactory.fromUrlSync(context, "https://www.lottiefiles.com/download/427").getValue();
+    drawComposition(composition, "GiftBox from LottieFiles URL (427)");
   }
 
   private int dpToPx(int dp) {

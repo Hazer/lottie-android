@@ -33,6 +33,7 @@
 
     <string name="preview_title">Preview</string>
     <string name="preview_qr">Scan a QR code</string>
+    <string name="preview_assets">Load from assets</string>
     <string name="preview_file">Open a file</string>
     <string name="preview_url">Enter a URL to a json or zip file</string>
     <string name="preview_load">Load</string>
@@ -47,7 +48,6 @@
     <string name="control_bar_scale">Scale</string>
     <string name="control_bar_trim">Trim</string>
     <string name="control_bar_speed">Speed</string>
-    <string name="control_bar_no_warnings">No Warnings</string>
     <string name="control_bar_key_paths">Show KeyPaths</string>
     <string name="control_bar_merge_paths">Merge Paths (KitKat+)</string>
 
@@ -81,5 +81,6 @@
     <string name="showcase_item_dynamic_properties">Dynamic\nProperties</string>
     <string name="showcase_item_animated_text">Animated\nText</string>
     <string name="showcase_item_dynamic_text">Dynamic\nText</string>
+    <string name="showcase_item_recycler_viwe">RecyclerView</string>
     <string name="bullseye_drag_dot">Drag the blue dot</string>
 </resources>

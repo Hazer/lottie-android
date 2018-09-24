@@ -1,15 +1,20 @@
 package com.airbnb.lottie.samples
 
 import android.support.multidex.MultiDexApplication
+import com.airbnb.lottie.L
 import com.google.gson.FieldNamingPolicy
 import com.google.gson.GsonBuilder
-import com.jakewharton.retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
+import retrofit2.adapter.rxjava2.RxJava2CallAdapterFactory
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.TimeUnit
 
 class LottieApplication : MultiDexApplication() {
-    val okHttpClient by lazy { OkHttpClient.Builder().build() }
+    val okHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .build() }
 
     val gson by lazy {
         GsonBuilder()
@@ -27,4 +32,9 @@ class LottieApplication : MultiDexApplication() {
     }
 
     val lottiefilesService by lazy { retrofit.create(LottiefilesService::class.java) }
+
+    override fun onCreate() {
+        super.onCreate()
+        L.DBG = true
+    }
 }
