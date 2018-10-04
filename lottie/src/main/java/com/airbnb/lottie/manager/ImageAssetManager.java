@@ -27,7 +27,6 @@ public class ImageAssetManager {
   private String imagesFolder;
   @Nullable private ImageAssetDelegate delegate;
   private final Map<String, LottieImageAsset> imageAssets;
-  private final Map<String, Bitmap> bitmaps = new HashMap<>();
 
   public ImageAssetManager(Drawable.Callback callback, String imagesFolder,
       ImageAssetDelegate delegate, Map<String, LottieImageAsset> imageAssets) {
@@ -58,31 +57,33 @@ public class ImageAssetManager {
    */
   @Nullable public Bitmap updateBitmap(String id, @Nullable Bitmap bitmap) {
     if (bitmap == null) {
-      return bitmaps.remove(id);
+      LottieImageAsset asset = imageAssets.get(id);
+      Bitmap ret = asset.getBitmap();
+      asset.setBitmap(null);
+      return ret;
     }
     return putBitmap(id, bitmap);
   }
 
   @Nullable public Bitmap bitmapForId(String id) {
-    Bitmap bitmap = bitmaps.get(id);
+    LottieImageAsset asset = imageAssets.get(id);
+    if (asset == null) {
+      return null;
+    }
+    Bitmap bitmap = asset.getBitmap();
     if (bitmap != null) {
       return bitmap;
     }
 
-    LottieImageAsset imageAsset = imageAssets.get(id);
-    if (imageAsset == null) {
-      return null;
-    }
-
     if (delegate != null) {
-      bitmap = delegate.fetchBitmap(imageAsset);
+      bitmap = delegate.fetchBitmap(asset);
       if (bitmap != null) {
         putBitmap(id, bitmap);
       }
       return bitmap;
     }
 
-    String filename = imageAsset.getFileName();
+    String filename = asset.getFileName();
     BitmapFactory.Options opts = new BitmapFactory.Options();
     opts.inScaled = true;
     opts.inDensity = 160;
@@ -117,23 +118,26 @@ public class ImageAssetManager {
 
   public void recycleBitmaps() {
     synchronized (bitmapHashLock) {
-      Iterator<Map.Entry<String, Bitmap>> it = bitmaps.entrySet().iterator();
-      while (it.hasNext()) {
-        Map.Entry<String, Bitmap> entry = it.next();
-        entry.getValue().recycle();
-        it.remove();
+      for (Map.Entry<String, LottieImageAsset> entry : imageAssets.entrySet()) {
+        LottieImageAsset asset = entry.getValue();
+        Bitmap bitmap = asset.getBitmap();
+        if (bitmap != null) {
+          bitmap.recycle();
+          asset.setBitmap(null);
+        }
       }
     }
   }
 
+
   public boolean hasSameContext(Context context) {
-    return context == null && this.context == null ||
-        context != null && this.context.equals(context);
+    return context == null && this.context == null || this.context.equals(context);
   }
 
   private Bitmap putBitmap(String key, @Nullable Bitmap bitmap) {
     synchronized (bitmapHashLock) {
-      return bitmaps.put(key, bitmap);
+      imageAssets.get(key).setBitmap(bitmap);
+      return bitmap;
     }
   }
 }

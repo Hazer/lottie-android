@@ -1,5 +1,43 @@
+# 2.7.0
+### Features and Improvements
+* Removed deprecated LottieCompositionFactory APIs. If you were using JsonObjects, switch to Strings (#959).
+* Made LottieTask.EXECUTOR public and static so tests can set it.
+* Allow layer names to be stripped from JSON if desired.
+* Allow returning null from LottieValueCallbacks to fall back to the default value.
+### Bugs Fixed
+* Allow text stroke width to be a double (#940).
+
+# 2.6.0
+### Features and Improvements
+* Added support for loading an image from a url directly. See LottieCompositionFactory for more information.
+* Added support for loading an animation from a zip file that contains the json as well as images.
+    * URLs supports zip files as well as json files.
+* Deprecated `LottieComposition.Factory` in favor of LottieCompositionFactory.
+    * The new factory methods make it easier to catch exceptions by separating out success and
+      failure handlers. Previously, catching exceptions was impossible and would crash your app.
+    * All APIs now have a mandatory cacheKey that uses an LRU cache rather than a strong/weak ref cache.
+    * If the same animation is fetched multiple times in parallel, the same task will be returned.
+      This will be massively helpful for animations that are loaded in a list.
+    * InputStreams are now always closed even if you use the old APIs. Please be aware if you were
+      using this while upgrading.
+* Added support for miter limit.
+* [Sample App] Added the ability to load a file from assets.
+### Bugs Fixed
+* Fixed a timing issue when there was time stretch on a masked layer.
+* Fixed support for Android P.
+* Make a best-effort attempt at rendering shapes in which the number of vertices changes rather than crashing.
+* Fixed a bug in which the inner radius animation of a polystar wouldn't update.
+
+# 2.5.7
+* Reapply min/max frame once composition is loaded (#827).
+* Fixed a bug that would ignore setting minFrame to 0 before the composition was set (#820).
+* Prevented Lottie from drawing a recycled bitmap (#828).
+
+# 2.5.6
+* Added support for targeting Android P
+* Fixed a potential dangling Choreographer callback ([#775](https://githubcom/airbnb/lottie-android/pull/775))
+
 # 2.5.5
-# Bugs Fixed
 * Fixed end times for layers/animations. Before, if the layer/animation out frame was 20, it would fully render frame 20. This is incorrect. The last rendered frame should be 19.999... in this case. This should make Lottie reflect After Effects more accurately. However, if you are getting the frame in onAnimationEnd or onAnimationRepeat, it will be one less than it used to be.
 * Added support for base64 encoded images directly in the json instead of the filename. They are 33% larger than their equivalent image file but enables you to have images with a single file.
 * Fixed a lint error about KeyPath visibility.
@@ -7,14 +45,13 @@
 * Prevent autoPlay from starting before the animation was attached to the window. This caused animations in a RecyclerView to start playing before they were on screen.
 
 # 2.5.4
-# Bugs Fixed
 * You can now call playAnimation() from onAnimationEnd
 * Min/Max frames are clipped to the composition start/end
 * setProgress takes into account start and end frame
 
 
 # 2.5.2
-# Features and Improvements
+### Features and Improvements
 * Totally new sample app!
     * Rebuilt from the ground up.
     * Lottiefiles integration

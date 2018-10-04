@@ -36,8 +36,8 @@
         android:layout_alignParentBottom="true"
         android:layout_gravity="bottom"
         android:orientation="horizontal"
-        android:paddingBottom="16dp"
-        android:paddingTop="16dp">
+        android:paddingBottom="12dp"
+        android:paddingTop="12dp">
 
         <RelativeLayout
             android:layout_width="wrap_content"
@@ -58,7 +58,7 @@
                 android:layout_height="wrap_content"
                 android:layout_below="@id/playButton"
                 android:layout_centerHorizontal="true"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="16dp"
                 android:text="0"
                 android:textColor="#464646"
                 android:textSize="10sp"/>
@@ -90,7 +90,8 @@
         android:padding="4dp"
         android:text="@string/render_times_per_layer_button"
         android:textColor="@color/item_selected_teal"
-        android:textSize="10sp"/>
+        android:textSize="10sp"
+        android:visibility="gone"/>
 
     <TextView
         android:id="@+id/lottieVersionView"

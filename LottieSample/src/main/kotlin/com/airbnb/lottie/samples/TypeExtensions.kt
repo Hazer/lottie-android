@@ -51,7 +51,7 @@ fun View.setVisibleIf(condition: Boolean) {
     visibility = if (condition) View.VISIBLE else View.GONE
 }
 
-fun ImageView.setImageUrl(url: String) = Glide.with(this).load(url).into(this)
+fun ImageView.setImageUrl(url: String?) = url?.let { Glide.with(this).load(it).into(this) }
 
 inline fun <reified T> flatten(vararg lists: List<T>?) = lists.flatMap { it ?: emptyList() }
 
@@ -61,14 +61,6 @@ fun Float.sqrt() = Math.sqrt(this.toDouble()).toFloat()
 
 fun View.getText(@StringRes res: Int) = this.resources.getText(res)
 operator fun Boolean.inc() = !this
-
-fun EditText.parseIntOrNull(): Int? {
-    return try {
-        Integer.parseInt(text.toString())
-    } catch (e: NumberFormatException) {
-        null
-    }
-}
 
 fun Context.hasPermission(permission: String): Boolean {
     return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
